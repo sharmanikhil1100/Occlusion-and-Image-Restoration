@@ -1,6 +1,6 @@
 # Image Restoration on Occlude Human Faces
 
-## What I did on this repository after forking.
+## What has been done on this repository :
 * Made minor changes in complete.py. 
 * Added Test images from Celeb-A.
 * Ran the code on my laptop for Results.
