@@ -11,6 +11,8 @@ import json
 import random
 import pprint
 import scipy.misc
+import imageio
+from matplotlib import pyplot
 import numpy as np
 from time import gmtime, strftime
 
@@ -22,10 +24,10 @@ def get_image(image_path, image_size, is_crop=True):
     return transform(imread(image_path), image_size, is_crop)
 
 def save_images(images, size, image_path):
-    return imsave(inverse_transform(images), size, image_path)
+    return imsave((images), size, image_path)
 
 def imread(path):
-    return scipy.misc.imread(path, mode='RGB').astype(np.float)
+    return pyplot.imread(path).astype(np.float) # mode='RGB'
 
 def merge_images(images, size):
     return inverse_transform(images)
@@ -42,11 +44,11 @@ def merge(images, size):
 
 def imsave(images, size, path):
     img = merge(images, size)
-    return scipy.misc.imsave(path, (255*img).astype(np.uint8))
+    return imageio.imsave(path, (255*img).astype(np.uint8))
 
 def center_crop(x, crop_h, crop_w=None, resize_w=64):
     if crop_w is None:
-        crop_w = crop_h
+      crop_w = crop_h
     h, w = x.shape[:2]
     j = int(round((h - crop_h)/2.))
     i = int(round((w - crop_w)/2.))

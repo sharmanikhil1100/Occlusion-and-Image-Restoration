@@ -9,6 +9,7 @@ import os
 import time
 import math
 import itertools
+import cv2
 from glob import glob
 import tensorflow as tf
 from six.moves import xrange
@@ -20,9 +21,33 @@ SUPPORTED_EXTENSIONS = ["png", "jpg", "jpeg"]
 
 def dataset_files(root):
     """Returns a list of all image files in the given directory"""
+    print(root)
     return list(itertools.chain.from_iterable(
         glob(os.path.join(root, "*.{}".format(ext))) for ext in SUPPORTED_EXTENSIONS))
 
+def computeParameters(matrix):
+    shape = matrix.shape
+    m = shape[1]-1
+    n = shape[2]-1
+    matrix = matrix[0,:,:,0]
+    mean = 0.0
+    sd = 0.0
+
+    for i in range(m):
+        for j in range(n):
+            mean += matrix[m, n]
+
+    mean /= (m+1)*(n+1)
+
+    for i in range(m):
+        for j in range(n):
+            sd += (matrix[m, n]-mean)*(matrix[m, n]-mean)
+
+    sd /= (m+1)*(n+1)
+    sd = math.pow(sd, 0.5)
+
+    print("mean : %1.2f"%mean)
+    print("standard deviation : %1.2f"%sd)
 
 class DCGAN(object):
     def __init__(self, sess, image_size=64, is_crop=False,
@@ -71,11 +96,11 @@ class DCGAN(object):
 
         # batch normalization : deals with poor initialization helps gradient flow
         self.d_bns = [
-            batch_norm(name='d_bn{}'.format(i,)) for i in range(4)]
+            batch_norm(name='d_bn{}'.format(i,)) for i in range(1,4)] #
 
         log_size = int(math.log(image_size) / math.log(2))
         self.g_bns = [
-            batch_norm(name='g_bn{}'.format(i,)) for i in range(log_size)]
+            batch_norm(name='g_bn{}'.format(i,)) for i in range(log_size - 1)] #
 
         self.checkpoint_dir = checkpoint_dir
         self.build_model()
@@ -244,6 +269,12 @@ Initializing a new one.
 
 
     def complete(self, config):
+        '''
+        mask : image of same shape as input but with occlusion masks
+        config.imgs : dataset images
+        lowres_mask : image of full black pixels but scaled down to low resolution - as passed in argss
+        batch_images.shape : (no_images in batch, m n, layers)
+        '''
         def make_dir(name):
             # Works on python 2.7, where exist_ok arg to makedirs isn't available.
             p = os.path.join(config.outDir, name)
@@ -300,7 +331,7 @@ Initializing a new one.
                      for batch_file in batch_files]
             batch_images = np.array(batch).astype(np.float32)
             if batchSz < self.batch_size:
-                print(batchSz)
+                # print(batchSz)
                 padSz = ((0, int(self.batch_size-batchSz)), (0,0), (0,0), (0,0))
                 batch_images = np.pad(batch_images, padSz, 'constant')
                 batch_images = batch_images.astype(np.float32)
@@ -311,9 +342,18 @@ Initializing a new one.
 
             nRows = np.ceil(batchSz/8)
             nCols = min(8, batchSz)
-            save_images(batch_images[:batchSz,:,:,:], [nRows,nCols],
+            # print(batch_files[l+idx])
+            # print(batch_images.shape)
+            # image_display = (batch_images[:batchSz,:,:,:]+1)*127.5
+            # print((image_display))
+            # cv2.imshow('dataset', image_display)
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
+
+            save_images((batch_images[:batchSz,:,:,:]+1)*127.5, [nRows,nCols],
                         os.path.join(config.outDir, 'before.png'))
-            masked_images = np.multiply(batch_images, mask)
+            # elementwise mul
+            masked_images = (np.multiply(batch_images, mask)+1)*127.5
             save_images(masked_images[:batchSz,:,:,:], [nRows,nCols],
                         os.path.join(config.outDir, 'masked.png'))
             if lowres_mask.any():
@@ -334,12 +374,18 @@ Initializing a new one.
                     self.z: zhats,
                     self.mask: mask,
                     self.lowres_mask: lowres_mask,
-                    self.images: batch_images,
+                    self.images: ((batch_images)+1)*127.5,
                     self.is_training: False
                 }
                 run = [self.complete_loss, self.grad_complete_loss, self.G, self.lowres_G]
                 loss, g, G_imgs, lowres_G_imgs = self.sess.run(run, feed_dict=fd)
-
+                # computeParameters(G_imgs)
+                # G_imgs = (G_imgs+1)*127.5
+                # print(G_imgs.shape)
+                # print(type(G_imgs))
+                # cv2.imshow('Generated images', G_imgs[0])
+                # cv2.waitKey(0)
+                # cv2.destroyAllWindows()
                 for img in range(batchSz):
                     with open(os.path.join(config.outDir, 'logs/hats_{:02d}.log'.format(img)), 'ab') as f:
                         f.write('{} {} '.format(i, loss[img]).encode())
@@ -351,18 +397,20 @@ Initializing a new one.
                                            'hats_imgs/{:04d}.png'.format(i))
                     nRows = np.ceil(batchSz/8)
                     nCols = min(8, batchSz)
-                    save_images(G_imgs[:batchSz,:,:,:], [nRows,nCols], imgName)
+                    # print(G_imgs[:batchSz,:,:,:])
+                    save_images(((G_imgs[:batchSz,:,:,:])), [nRows,nCols], imgName)
                     if lowres_mask.any():
                         imgName = imgName[:-4] + '.lowres.png'
                         save_images(np.repeat(np.repeat(lowres_G_imgs[:batchSz,:,:,:],
                                               self.lowres, 1), self.lowres, 2),
                                     [nRows,nCols], imgName)
-
+                    # G_imgs <- X 
                     inv_masked_hat_images = np.multiply(G_imgs, 1.0-mask)
+                    #inv_masked_hat_images = np.multiply(batch_images[:batchSz,:,:,:], 1.0-mask)
                     completed = masked_images + inv_masked_hat_images
                     imgName = os.path.join(config.outDir,
                                            'completed/{:04d}.png'.format(i))
-                    save_images(completed[:batchSz,:,:,:], [nRows,nCols], imgName)
+                    save_images((completed[:batchSz,:,:,:]), [nRows,nCols], imgName)
 
                 if config.approach == 'adam':
                     # Optimize single completion with Adam
@@ -411,8 +459,8 @@ Initializing a new one.
             h1 = lrelu(self.d_bns[0](conv2d(h0, self.df_dim*2, name='d_h1_conv'), self.is_training))
             h2 = lrelu(self.d_bns[1](conv2d(h1, self.df_dim*4, name='d_h2_conv'), self.is_training))
             h3 = lrelu(self.d_bns[2](conv2d(h2, self.df_dim*8, name='d_h3_conv'), self.is_training))
-            h4 = linear(tf.reshape(h3, [-1, 8192]), 1, 'd_h4_lin')
-    
+            h4 = linear(tf.reshape(h3, [-1, 8192]), 1, 'd_h3_lin') #
+
             return tf.nn.sigmoid(h4), h4
 
     def generator(self, z):
@@ -425,7 +473,7 @@ Initializing a new one.
             hs[0] = tf.nn.relu(self.g_bns[0](hs[0], self.is_training))
 
             i = 1 # Iteration number.
-            depth_mul = 8  # Depth decreases as spatial component increases.
+            depth_mul = 4  # Depth decreases as spatial component increases.
             size = 8  # Size increases as depth decreases.
 
             while size < self.image_size:
@@ -443,7 +491,8 @@ Initializing a new one.
             name = 'g_h{}'.format(i)
             hs[i], _, _ = conv2d_transpose(hs[i - 1],
                 [self.batch_size, size, size, 3], name=name, with_w=True)
-    
+            
+            # tanh last layer - (tips & tricks)
             return tf.nn.tanh(hs[i])
 
     def save(self, checkpoint_dir, step):
